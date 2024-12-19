@@ -21,7 +21,10 @@ In this project, I prepare and analyse a corpus of texts written by a roster of 
 (list algorithms used in preparing the dataset and in analysis)
 ## Methodology
 *Set out how you explored the dataset and/or algorithm modifications. For example, you might have decided to use cross-validation; if so, explain why this technique was necessary.*
-bruh
+
+Preparing the data
+
+
 ## Results
 *Your results must be stated clearly. Tables are recommended. You should cross-reference to the experiments that you described in the Methodology section.*
 bruh
