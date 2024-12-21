@@ -22,15 +22,30 @@ In this project, I prepare and analyse a corpus of texts written by a roster of 
 ## Methodology
 *Set out how you explored the dataset and/or algorithm modifications. For example, you might have decided to use cross-validation; if so, explain why this technique was necessary.*
 
-Preparing the data
+Preparing the dataset
+- Extracting text-author pairs
+- Vectorising and grouping into batches
 
+A single evaluation
+- Separating holdout
+- Feature selection
+- Centring and standardising
+- PCA with power iteration
 
+Testing run
+- 10 evaluations
+- other evaluations
+- k-Nearest Neighbours for F-score/confusion matrix
 ## Results
 *Your results must be stated clearly. Tables are recommended. You should cross-reference to the experiments that you described in the Methodology section.*
-bruh
+
+various observations from single evaluation
+accuracy of k-nn
 ## Evaluation
 *This is a chance to demonstrate a critical awareness of the strengths and weaknesses of your project. Remember that a research project is judged by referring to the stated aim. A project does not have to succeed! Marks are allocated for how you undertook the project and for understanding and insight. A very ambitious aim might be unachievable within the terms of this project.*
-bruh
+
+conclusions from single evaluation (to tell apart human from synthetic writing)
+conclusions from testing run (to tell apart writing styles)
 ## Conclusions
 *State succinctly your findings and how they relate to your aim.*
 bruh
