@@ -12,11 +12,13 @@ Just as literacy has become necessary for all after the industrial age, I believ
 
 (Literature review? They focus on the effectiveness of detection, but they do not seem to draw conclusions that the general public can follow, and it may be impractical to rely on detection algorithms at all times.)
 
-In this project, I prepare and analyse a corpus of texts written by a roster of small LLMs, and aim to identify choice vocabulary that distinguishes between human and LLM-generated texts. I also perform further exploratory analysis in an attempt to identify writing styles between models. Finally, I evaluate the effectiveness of my methodology as compared to that of existing studies, and conclude with some actionable steps to identify AI-generated text.
+In this project, I prepare and analyse a corpus of texts written by a roster of small LLMs, and aim to identify choice vocabulary that distinguishes between human and LLM-generated texts. I also experiment with simple approaches as mandated by the assignment brief to identify the exact author of any text. Finally, I conclude with some actionable steps to identify AI-generated text.
 ## Background
 *Here you should explain in your own words how your algorithms work. This is where you can demonstrate that you understand the tools and models that you used. Marks will be gained accordingly.*
 ### Dataset
-(talk about LMArena)
+[*Chatbot Arena*](https://chat.lmsys.org/) is an online platform that hosts multiple LLMs. When a user starts a conversation, the platform automatically chooses two of its models to provide responses. The user may continue the conversation with both anonymous models until they are ready to decide on the better model. In addition to developing the platform, the team also released a paper that evaluated the strengths of their models, as well as a curated dataset of conversations on the platform [(Chiang et al, 2024)](#^1).
+
+
 ### Algorithms
 (list algorithms used in preparing the dataset and in analysis)
 ## Methodology
@@ -46,9 +48,25 @@ accuracy of k-nn
 
 conclusions from single evaluation (to tell apart human from synthetic writing)
 conclusions from testing run (to tell apart writing styles)
+
+| d   | k   | Micro F_1 score |
+| --- | --- | --------------- |
+| 26  | 1   | 0.592063        |
+| 26  | 2   | 0.592063        |
+| 31  | 9   | 0.592063        |
+| 26  | 3   | 0.590476        |
+| 31  | 10  | 0.588889        |
+| ... | ... | ...             |
+| 1   | 5   | 0.195238        |
+| 1   | 6   | 0.195238        |
+| 1   | 1   | 0.193651        |
+| 1   | 2   | 0.193651        |
+| 1   | 3   | 0.193651        |
+
+750 rows × 3 columns
 ## Conclusions
 *State succinctly your findings and how they relate to your aim.*
 bruh
 ## References
 *List any academic work (such as a book or a research paper) that you refer to in the main body of the report.*
-bruh
+1. https://doi.org/10.48550/arXiv.2403.04132 ^1
