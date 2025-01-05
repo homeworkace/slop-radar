@@ -287,7 +287,7 @@ As a form of normalisation, I extracted the length of the average text in each b
 
 At this point, the dataset was ready for analysis. It had been grouped into batches, attributed to any of the models or the average human. Each batch was a vector of token frequencies across the entire vocabulary space. From here, the batches would serve as the input units for multiple runs of the subsequent analysis: feature extraction, PCA, and k-NN.
 ### Visualising a single run
-In this section, I describe the steps of my analysis using a single run as an example.
+In this section, I describe the steps of my analysis using a single run as an example. While developing the functions in this notebook, I used this run to iteratively test and improve the flow of data for the multiple runs to come. I also regularly paused to add visualisations during the run to understand the characteristics of the data and justify some design decisions. 
 #### Custom holdout
 One batch per author was chosen at random to be holdout data. This means that the holdout dataset for the run consisted of one batch from each author (21 batches). Consequently, the 570 remaining batches were designated to be training data. In this particular run, I seeded `random` with `0`.
 
@@ -335,14 +335,208 @@ def standardise(dataset, holdout_dataset) :
     return dataset, holdout_dataset
 ```
 
-Following normalization, token frequencies were standardized feature-wise (z-scores) to address differences in scale and magnitude. Each feature's mean was subtracted, and values were divided by standard deviation, aligning the data for PCA and distance-based methods like k-NN. The holdout batches underwent the same transformations using the training set parameters to preserve independence.
+Before performing PCA, it's a good practice to normalise the data points. Without centralisation, the first principal component is the direction to the mean, rather than the direction of maximum variance. Without scaling, the *loading* (contribution from each dimension) for the first few PCs will be dominated by dimensions with observations across a larger magnitude, making human interpretation inaccurate.
+
+First, I subtracted the mean from each training batch to centre the data. Then, I divided each dimension by their standard deviations to standardise the data. As a result, the batches had a mean of 0, and a standard deviation of 1 for each of its 132 dimensions in this run. Each dimension of the dataset contributed 1 unit of variance, for a total variance of 132. Finally, I applied the same transformation to the holdout batches. The holdout batches were not factored in when computing the means and standard deviations to simulate the projection of unseen data onto the learned space. In hindsight, my functions could have returned the means and standard deviations along with the normalised data, so that I could project new data into transformed space or existing data back into the original space. 
 #### PCA with power iteration
+```py
+def power_iteration(A, num_iter, tol, single_run_diagnostics = False):
+    """
+    Computes the dominant eigenvalue and corresponding eigenvector of matrix A.
+    Args:
+        A (np.ndarray): Input symmetric matrix.
+        num_iter (int): Number of iterations.
+        tol (float): Tolerance for convergence.
+        single_run_diagnostics (bool): If True, shows a progress bar to convergence.
+
+    Returns:
+        (np.ndarray): Approximation of the largest eigenvector.
+        (float): Corresponding eigenvalue.
+    """
+    # Start with a random unit vector
+    b = np.random.rand(A.shape[1])
+    b = b / np.linalg.norm(b)
+
+    # Start a progress bar
+    if single_run_diagnostics :
+        error_meter = tqdm(position = 0, total = 7, bar_format='{bar} | {postfix}')
+        
+    for i in range(num_iter):
+        b_next = A @ b # Multiply, and...
+        b_next = b_next / np.linalg.norm(b_next) # ... normalise!
+        
+        # Check for convergence
+        error = np.linalg.norm(b_next - b)
+        b = b_next
+        if single_run_diagnostics :
+            error_meter.update(min(-np.log10(error), error_meter.total) - error_meter.n)
+            error_meter.set_postfix_str('{:.2E}'.format(error) + ' of error after ' + str(i + 1) + ' iterations...')
+        if error < tol:
+            if single_run_diagnostics :
+                error_meter.close()
+            break
+
+    eigenvalue = b.T @ A @ b  # Rayleigh quotient
+    return b, eigenvalue
+
+def pca_power_iteration(data, num_components, num_iter, single_run_diagnostics = False):
+    """
+    Principal component analysis with power iteration to compute the principal components.
+    Args:
+        data (np.ndarray): Input data matrix (rows are samples, columns are features).
+        num_components (int): Number of principal components to compute.
+        num_iter (int): Number of iterations for power iteration.
+        single_run_diagnostics (bool): Passes value to power_iteration(). If True, prints whenever a new component is being calculated.
+
+    Returns:
+        (list): List of principal components (eigenvectors).
+        (list): List of corresponding eigenvalues.
+    """
+    components = []
+    explained_variance = []
+    
+    # Compute covariance matrix
+    n = data.shape[1]
+    covariance_matrix = (data @ data.T) / n
+
+    for i in range(num_components):
+        # Compute the largest eigenvector using power iteration
+        if single_run_diagnostics :
+            print('Computing PC' + str(i + 1) + '...')
+        eigenvector, eigenvalue = power_iteration(covariance_matrix, num_iter, 1e-7, single_run_diagnostics)
+        components.append(eigenvector)
+        explained_variance.append(eigenvalue)
+        
+        # Deflate the covariance matrix
+        covariance_matrix -= eigenvalue * np.outer(eigenvector, eigenvector)
+        if np.linalg.norm(covariance_matrix, ord = 'fro') < 1e-10 :
+            if single_run_diagnostics :
+                print('Stopped as all variance has been extracted after computing ' + str(i + 1) + ' PCs.')
+            break
+        
+    return components, explained_variance
+
+def transform_to_pc(batch, components) :
+    pc_space_batch = []
+    for component in components :
+        pc_space_batch.append(np.dot(batch, component))
+        
+    return pc_space_batch
+```
+
+I implemented PCA and power iteration only with the help of `numpy` operations. While testing them, I also added progress bars to ensure that my algorithms were working, and that they weren't stuck in loops.
+Finally, I created a utility function to project all batches onto PC space, by passing in as many PCs as I wanted. I assembled the testing labels with the fact that the holdout dataset is constructed by iterating through the list of unique authors, whose order stayed the same regardless of runs.
+
+In this particular run I computed 50 principal components. Between 374 training batches and 132 dimensions there would be up to 132 PCs. I intended to have an excess of PCs to work with, and 50 seemed like a good halfway point to stop at. I saved the components into a list so that I'd be able to project the testing batches into PC space later on.
 #### k-nearest neighbours
+```py
+def k_nearest_neighbours(X_train, y_train, X_test, k = 3):
+    """
+    Predict labels for points in the testing dataset.
+    Args:
+        X_train (np.ndarray): Points in the training dataset.
+        y_train (np.ndarray): Labels in the training dataset.
+        X_test (np.ndarray): Points in the testing dataset.
+        k (int): The number of nearest neighbours whose label to consider.
+
+    Returns:
+        (np.ndarray): List of predicted labels.
+    """
+    predictions = []
+
+    for test_point in X_test:
+        # Compute distances to all training points.
+        distances = [np.linalg.norm(train_point - test_point) for train_point in X_train]
+
+        # Determine which points are neighbours.
+        k_indices = np.argsort(distances)[:k]
+        k_labels = y_train[k_indices]
+        # Determine the most common label amongst neighbours.
+        unique_labels, counts = np.unique(k_labels, return_counts = True)
+        # In the event of tiebreaks, reduce k. At k = 1 a winner is guaranteed.
+        while np.count_nonzero(counts == np.max(counts)) != 1 :
+            k -= 1
+            unique_labels, counts = np.unique(y_train[np.argsort(distances)[:k]], return_counts = True)
+        
+        predictions.append(unique_labels[np.argmax(counts)])
+    
+    return np.array(predictions)
+```
+
+I implemented k-NN only with the help of `numpy` operations. During this run I experimented with various hyperparameters because the k-NN predictions were worse than expected, but left it at 10 dimensions and a k of 5 for the visualisation. I shall discuss the results of all visualisations from the run below. 
 ### Runs across hyperparameters
+As the steps of a single run of analysis have been implemented and tested, I prepared a testing regime to perform multiple runs, over a range of hyperparameters. In this section I describe the process of choosing the range of hyperparameters and metrics of evaluation.
 #### Testing regime
+```py
+def test_suite(hp_n, hp_d, hp_k) :
+    predictions = {}  # Dictionary to store predictions for each (d, k) pair
+
+    for n in range(hp_n) :
+        print('Run #' + str(n + 1) + ', d = ')
+        training_dataset, holdout_dataset = holdout(batch_dataset, list(set(authors)), n)
+        training_dataset, holdout_dataset = common_tokens(training_dataset, holdout_dataset)
+        training_dataset, holdout_dataset = centre(training_dataset, holdout_dataset)
+        training_dataset, holdout_dataset = standardise(training_dataset, holdout_dataset)
+        components, explained_variance = pca_power_iteration(training_dataset, hp_d, 2000, False)
+        
+        for d in tqdm(range(1, hp_d + 1)) :
+            training_batches = np.array([transform_to_pc(training_dataset[batch], components[:d]) for batch in training_dataset])
+            training_labels = np.array([batch.split('_')[1] for batch in training_dataset])
+            testing_batches = np.array([transform_to_pc(holdout_dataset[batch], components[:d]) for batch in holdout_dataset])
+            
+            for k in range(1, hp_k + 1) :
+                if n == 0 :
+                    predictions[(d, k)] = k_nearest_neighbours(training_batches, training_labels, testing_batches, k)
+                else :
+                    predictions[(d, k)] = np.append(predictions[(d, k)], k_nearest_neighbours(training_batches, training_labels, testing_batches, k))
+                    
+    return predictions
+```
+
+The regime performs runs for every possible combination of `n` (seed), `d` (dimensions/PCs), and `k` (the k in k-NN), up to `hp_n`, `hp_d`, and `hp_k` respectively. For every `n`, different batches are separated as holdout. This influences the results of feature selection, normalisation and PCA. Then, for every `d`, the batches are projected onto the first `d` components. `d` influences in how many dimensions k-NN will use to calculate distances between batches later on. `d` is looped inside of `n`, because PCA, done once, has already calculated all the PCs that any `d` will require. Lastly, for every `k`, the holdout batches are checked against `k` of their nearest neighbours. `k` is looped inside of `d`, because any `k` will share the same list of training and holdout batches. The regime aggregates all the predictions in a 2-tuple dictionary for each `d` and `k`. `n` is not tracked, as the seed is not an optimisable hyperparameter.
+
+`hp_d` influenced the largest amount of PCs to find distances with. Since later PCs explain less of the variance, there should come a point where the added accuracy from the next PC is not worth the complexity of calculating distances in an additional dimension. The optimal `d` should be between 1 and `hp_d`, so `hp_d` had to be a higher value than was reasonable.
+
+![](images/variance.png)
+
+One popular criterion is to find the *elbow* on a Scree plot, where the PCs right of the elbow no longer lose as much variance as is expected. These PCs may encode noise instead of any useful findings, and can be dropped. However, during this run the computed PCs were too well-distributed to find such an elbow. I even used a logarithmic plot to accentuate the differences between PCs at lower values, but past PC10 a linear trend is observed, meaning that the drop in explained variance follows a smooth logarithmic curve. Another is the *Kaiser criterion*: to drop PCs that don't explain at least 1 unit of variance. Normalised dimensions contribute 1 unit of variance each, and in this view, to include PCs that don't explain as much as an untransformed dimension defeats the purpose of PCA. This point is at PC35, but only 68% of all variance is explained by the first 35 PCs, meaning that a third of potentially meaningful variance could be lost. Finally, I can find some cumulative variance threshold, that can serve as a good enough approximation of the original dimension space. Popular figures include 90% to 97% (3 standard deviations). However, being so well distributed, the first 50 PCs in this run only explain 77% of all variance. Calculating 50 PCs to a tolerance of `1e-8` or 2000 steps, whichever came first, took my workstation over 3 minutes, and I'd have to redo this `hp_n` times. I was balancing between the accuracy of the data and a feasible computation time, and decided that 50 would be an acceptable range for `d`.
+
+`hp_k` influenced the maximum number of neighbours whose labels to consider during predictions. Once again, the optimal `k` should be within the range between 1 and `hp_k`, so `hp_k` had to be a higher value than reasonable.
+
+```
+197 batches of human with an average of 199.57 texts per batch.
+36 batches of vicuna-13b with an average of 199.81 texts per batch.
+33 batches of koala-13b with an average of 200.45 texts per batch.
+29 batches of oasst-pythia-12b with an average of 199.10 texts per batch.
+28 batches of gpt-3.5-turbo with an average of 199.04 texts per batch.
+27 batches of alpaca-13b with an average of 199.96 texts per batch.
+25 batches of gpt-4 with an average of 197.80 texts per batch.
+22 batches of RWKV-4-Raven-14B with an average of 199.64 texts per batch.
+22 batches of claude-v1 with an average of 204.55 texts per batch.
+19 batches of chatglm-6b with an average of 199.53 texts per batch.
+18 batches of mpt-7b-chat with an average of 195.33 texts per batch.
+18 batches of vicuna-7b with an average of 198.78 texts per batch.
+18 batches of palm-2 with an average of 195.94 texts per batch.
+18 batches of fastchat-t5-3b with an average of 205.50 texts per batch.
+17 batches of dolly-v2-12b with an average of 194.53 texts per batch.
+16 batches of stablelm-tuned-alpha-7b with an average of 203.06 texts per batch.
+16 batches of claude-instant-v1 with an average of 194.81 texts per batch.
+12 batches of llama-13b with an average of 199.42 texts per batch.
+7 batches of wizardlm-13b with an average of 198.71 texts per batch.
+7 batches of gpt4all-13b-snoozy with an average of 203.57 texts per batch.
+6 batches of guanaco-33b with an average of 208.00 texts per batch.
+```
+
+Some samples (batches) are underrepresented, which may skew the results of k-NN. Theoretically, this should be true for a high `k` and with a lack of batches. For example, there are only 6 batches of *guanaco-33b*. In any run, the training dataset has 5 batches and the holdout dataset has 1. When predicting the label for this holdout batch at `k` = 15, even if all of the training batches of *guanaco-33b* are in the neighbourhood, there will still be 10 other labels, guaranteeing that *guanaco-33b* is not the label of majority. As the largest plurality the correct label may still be chosen, but if the *guanaco-33b* cluster is around another cluster that has a larger population, that cluster's label will be predicted instead. At `k` = 15, 3 out of the 21 labels will be guaranteed to never be a majority of any neighbourhood (and will thus affect precision negatively), so I considered this an acceptable maximum value for `hp_k`.
+
+Since the holdout would only contain one batch from each author, every run for each `d` and `k` would only have one prediction per label. Associated metrics like the confusion matrix and F-scores cannot be reliably interpreted with one-shot sample sizes, so I used Monte-Carlo cross-validation to separate the holdout in different ways for each `d` and `k` as described earlier. `hp_n` influenced the number of runs, and I chose 30, following the popular rule of thumb of the acceptable sample size.
 #### Confusion matrix and F-score
+
+
 ## Results
 ### Visualising a single evaluation
+![](images/PCA.png)
+
 ### Confusion matrix and F-score
 | d   | k   | Micro F_1 score |
 | --- | --- | --------------- |
