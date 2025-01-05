@@ -1,3 +1,5 @@
 .obsidian
 .ipynb_checkpoints
 *.json
+*.html
+*.pdf
